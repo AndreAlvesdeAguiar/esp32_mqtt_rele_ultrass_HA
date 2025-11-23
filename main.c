@@ -2,13 +2,13 @@
 #include <PubSubClient.h>
 
 // ===================== Wi-Fi/MQTT =====================
-#define WIFI_SSID      "AGUIA 2.4G"
-#define WIFI_PASSWORD  "Leticia150789"
+#define WIFI_SSID      "xxx"
+#define WIFI_PASSWORD  "xxx"
 
 #define MQTT_BROKER    "homeassistant.local"  // ou IP do broker, ex "192.168.15.35"
 #define MQTT_PORT      1883
-#define MQTT_USER      "esp32"
-#define MQTT_PASS      "SENHA_FORTE"
+#define MQTT_USER      "xxx"
+#define MQTT_PASS      "xxx"
 
 // ===================== Dispositivo =====================
 const char* DEVICE_NAME     = "esp32c3-bomba-hidroponia";
