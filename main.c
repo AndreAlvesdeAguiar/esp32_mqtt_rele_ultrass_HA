@@ -14,16 +14,22 @@
 const char* DEVICE_NAME     = "esp32c3-bomba-hidroponia";
 const char* DEVICE_FRIENDLY = "Bomba Hidroponia";
 
-String base       = "homeassistant";
-String availTopic = String("home/") + DEVICE_NAME + "/status";
-String stateTopic = String("home/") + DEVICE_NAME + "/state";
-String cmdTopic   = String("home/") + DEVICE_NAME + "/set";
+String base          = "homeassistant";
+String availTopic    = String("home/") + DEVICE_NAME + "/status";
+String stateTopic    = String("home/") + DEVICE_NAME + "/state";
+String cmdTopic      = String("home/") + DEVICE_NAME + "/set";
+String distanceTopic = String("home/") + DEVICE_NAME + "/distance";
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
-const int RELAY_PIN = 4;   // ajuste para o pino que você ligou o relé
+// ===================== RELE =====================
+const int RELAY_PIN = 4;   // pino do relé
 bool relayOn = false;
+
+// ===================== HC-SR04 =====================
+const int TRIG_PIN = 5;    // TRIG
+const int ECHO_PIN = 18;   // ECHO  lembre do divisor de tensão para o ECHO
 
 char payload[256];
 
@@ -50,6 +56,37 @@ void connectWiFi() {
   }
 }
 
+// ===================== ULTRASSOM =====================
+float readDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(4);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long dur = pulseIn(ECHO_PIN, HIGH, 30000);  // timeout 30 ms
+  if (dur == 0) {
+    Serial.println("HC-SR04 timeout");
+    return -1;
+  }
+
+  float dist = (dur * 0.0343f) / 2.0f;        // cm
+  return dist;
+}
+
+void publishDistance() {
+  if (!mqtt.connected()) return;
+
+  float d = readDistance();
+  if (d < 0) return;
+
+  String s = String(d, 1);
+  mqtt.publish(distanceTopic.c_str(), s.c_str(), true);
+
+  Serial.print("DIST ");
+  Serial.println(s);
+}
+
 // ===================== MQTT Discovery =====================
 void publishState() {
   const char* st = relayOn ? "ON" : "OFF";
@@ -62,20 +99,32 @@ void publishDiscovery() {
                   "\"name\":\"" + String(DEVICE_FRIENDLY) + "\"," +
                   "\"mdl\":\"ESP32+RELE\",\"mf\":\"Andre\"}";
 
-  String switchCfgTopic = base + "/switch/" + DEVICE_NAME + "/config";
+  String switchCfgTopic  = base + "/switch/" + String(DEVICE_NAME) + "/config";
+  String sensorCfgTopic  = base + "/sensor/" + String(DEVICE_NAME) + "_distance/config";
 
-  String cfg = String("{") +
-               "\"name\":\""      + String(DEVICE_FRIENDLY) + "\"," +
-               "\"uniq_id\":\""   + String(DEVICE_NAME) + "_switch\"," +
-               "\"cmd_t\":\""     + cmdTopic   + "\"," +
-               "\"stat_t\":\""    + stateTopic + "\"," +
-               "\"avty_t\":\""    + availTopic + "\"," +
-               "\"pl_on\":\"ON\"," +
-               "\"pl_off\":\"OFF\"," +
-               devObj +
-               "}";
+  String cfgSwitch = String("{") +
+                     "\"name\":\""      + String(DEVICE_FRIENDLY) + "\"," +
+                     "\"uniq_id\":\""   + String(DEVICE_NAME) + "_switch\"," +
+                     "\"cmd_t\":\""     + cmdTopic   + "\"," +
+                     "\"stat_t\":\""    + stateTopic + "\"," +
+                     "\"avty_t\":\""    + availTopic + "\"," +
+                     "\"pl_on\":\"ON\"," +
+                     "\"pl_off\":\"OFF\"," +
+                     devObj +
+                     "}";
 
-  mqtt.publish(switchCfgTopic.c_str(), cfg.c_str(), true);
+  String cfgDistance = String("{") +
+                       "\"name\":\"Nivel Agua\"," +
+                       "\"uniq_id\":\"" + String(DEVICE_NAME) + "_distance\"," +
+                       "\"stat_t\":\""  + distanceTopic + "\"," +
+                       "\"unit_of_meas\":\"cm\"," +
+                       "\"dev_cla\":\"distance\"," +
+                       "\"avty_t\":\"" + availTopic + "\"," +
+                       devObj +
+                       "}";
+
+  mqtt.publish(switchCfgTopic.c_str(),  cfgSwitch.c_str(),   true);
+  mqtt.publish(sensorCfgTopic.c_str(),  cfgDistance.c_str(), true);
 }
 
 // ===================== MQTT =====================
@@ -94,12 +143,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == cmdTopic) {
     if (msg == "ON") {
       relayOn = true;
-      // relé ativo em nível baixo
-      digitalWrite(RELAY_PIN, LOW);   // ON físico
+      digitalWrite(RELAY_PIN, LOW);   // ativo em LOW
       publishState();
     } else if (msg == "OFF") {
       relayOn = false;
-      digitalWrite(RELAY_PIN, HIGH);  // OFF físico
+      digitalWrite(RELAY_PIN, HIGH);
       publishState();
     }
   }
@@ -165,9 +213,11 @@ void setup() {
   delay(200);
 
   pinMode(RELAY_PIN, OUTPUT);
-  // estado inicial: relé desligado
   relayOn = false;
-  digitalWrite(RELAY_PIN, HIGH);  // OFF físico para relé ativo em LOW
+  digitalWrite(RELAY_PIN, HIGH);  // relé desligado (ativo em LOW)
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 
   connectWiFi();
   connectMQTT();
@@ -176,6 +226,12 @@ void setup() {
 void loop() {
   ensureConnections();
   mqtt.loop();
+
+  static unsigned long lastDist = 0;
+  if (millis() - lastDist > 5000) {
+    lastDist = millis();
+    publishDistance();
+  }
 
   delay(50);
 }
